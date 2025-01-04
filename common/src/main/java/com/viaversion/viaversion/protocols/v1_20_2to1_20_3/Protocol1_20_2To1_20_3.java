@@ -17,6 +17,9 @@
  */
 package com.viaversion.viaversion.protocols.v1_20_2to1_20_3;
 
+import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.NumberTag;
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.data.MappingData;
@@ -41,6 +44,7 @@ import com.viaversion.viaversion.protocols.v1_20_2to1_20_3.packet.ServerboundPac
 import com.viaversion.viaversion.protocols.v1_20_2to1_20_3.packet.ServerboundPackets1_20_3;
 import com.viaversion.viaversion.protocols.v1_20_2to1_20_3.rewriter.BlockItemPacketRewriter1_20_3;
 import com.viaversion.viaversion.protocols.v1_20_2to1_20_3.rewriter.EntityPacketRewriter1_20_3;
+import com.viaversion.viaversion.protocols.v1_20_2to1_20_3.rewriter.TickRateState;
 import com.viaversion.viaversion.protocols.v1_20to1_20_2.packet.ClientboundConfigurationPackets1_20_2;
 import com.viaversion.viaversion.protocols.v1_20to1_20_2.packet.ClientboundPacket1_20_2;
 import com.viaversion.viaversion.protocols.v1_20to1_20_2.packet.ClientboundPackets1_20_2;
@@ -52,6 +56,7 @@ import com.viaversion.viaversion.rewriter.SoundRewriter;
 import com.viaversion.viaversion.rewriter.StatisticsRewriter;
 import com.viaversion.viaversion.rewriter.TagRewriter;
 import com.viaversion.viaversion.util.ComponentUtil;
+import com.viaversion.viaversion.util.Key;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.UUID;
@@ -308,6 +313,57 @@ public final class Protocol1_20_2To1_20_3 extends AbstractProtocol<ClientboundPa
 
         registerServerbound(ServerboundConfigurationPackets1_20_2.RESOURCE_PACK, resourcePackStatusHandler());
         registerClientbound(ClientboundConfigurationPackets1_20_2.RESOURCE_PACK, ClientboundConfigurationPackets1_20_3.RESOURCE_PACK_PUSH, resourcePackHandler(ClientboundConfigurationPackets1_20_3.RESOURCE_PACK_POP));
+
+        // for carpet portals
+        appendClientbound(ClientboundPackets1_20_2.CUSTOM_PAYLOAD, wrapper -> {
+            wrapper.resetReader();
+            String channel = Key.namespaced(wrapper.passthrough(Types.STRING));
+            if ("carpet:hello".equals(channel)) {
+                CompoundTag data = wrapper.read(Types.COMPOUND_TAG);
+
+                Float tickRate = null;
+                Tag tickRateTag = data.remove("TickRate");
+                if (tickRateTag instanceof NumberTag tickRateNumberTag) {
+                    tickRate = tickRateNumberTag.asFloat();
+                }
+
+                Boolean isTickFrozen = null;
+                Tag tickingStateTag = data.remove("TickingState");
+                if (tickingStateTag instanceof CompoundTag tickingStateCompound) {
+                    NumberTag isTickFrozenNumber = tickingStateCompound.getNumberTag("is_frozen");
+                    if (isTickFrozenNumber != null) {
+                        isTickFrozen = isTickFrozenNumber.asBoolean();
+                    }
+                }
+
+                if (tickRate != null || isTickFrozen != null ) {
+                    TickRateState tickRateState = wrapper.user().get(TickRateState.class);
+                    assert tickRateState != null;
+                    if (tickRate == null) {
+                        tickRate = tickRateState.tickRate;
+                    } else {
+                        tickRateState.tickRate = tickRate;
+                    }
+                    if (isTickFrozen == null) {
+                        isTickFrozen = tickRateState.isFrozen;
+                    } else {
+                        tickRateState.isFrozen = isTickFrozen;
+                    }
+                    PacketWrapper tickStatePacket = wrapper.create(ClientboundPackets1_20_3.TICKING_STATE);
+                    tickStatePacket.write(Types.FLOAT, tickRate);
+                    tickStatePacket.write(Types.BOOLEAN, isTickFrozen);
+                    tickStatePacket.send(Protocol1_20_2To1_20_3.class);
+                }
+
+                data.remove("SuperHotState");
+                data.remove("TickPlayerActiveTimeout");
+                if (data.isEmpty()) {
+                    wrapper.cancel();
+                } else {
+                    wrapper.write(Types.COMPOUND_TAG, data);
+                }
+            }
+        });
     }
 
     private PacketHandler resourcePackStatusHandler() {

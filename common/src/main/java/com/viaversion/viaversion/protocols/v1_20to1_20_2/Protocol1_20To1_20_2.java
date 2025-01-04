@@ -20,6 +20,8 @@ package com.viaversion.viaversion.protocols.v1_20to1_20_2;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.viaversion.nbt.tag.CompoundTag;
+import com.viaversion.nbt.tag.StringTag;
+import com.viaversion.nbt.tag.Tag;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.ProtocolInfo;
 import com.viaversion.viaversion.api.connection.UserConnection;
@@ -239,6 +241,37 @@ public final class Protocol1_20To1_20_2 extends AbstractProtocol<ClientboundPack
         if (channel.equals("minecraft:brand")) {
             wrapper.passthrough(Types.STRING);
             wrapper.clearInputBuffer();
+        }
+
+        // carpet mod packet
+        if (channel.equals("carpet:hello")) {
+            if (wrapper.getPacketType() == null) {
+                return;
+            }
+            switch (wrapper.getPacketType().direction()) {
+                case CLIENTBOUND:
+                    int command = wrapper.read(Types.VAR_INT);
+                    if (command == 69) { // hi
+                        String version = wrapper.read(Types.STRING);
+                        CompoundTag dataTag = new CompoundTag();
+                        dataTag.put("69", new StringTag(version));
+                        wrapper.write(Types.COMPOUND_TAG, dataTag);
+                    } else if (command == 1) {
+                        wrapper.write(Types.COMPOUND_TAG, wrapper.read(Types.NAMED_COMPOUND_TAG));
+                    } else {
+                        wrapper.cancel();
+                    }
+                case SERVERBOUND:
+                    CompoundTag dataTag = wrapper.read(Types.COMPOUND_TAG);
+                    Tag hello = dataTag.remove("420");
+                    if (hello instanceof StringTag versionTag) {
+                        PacketWrapper newPacket = PacketWrapper.create(ServerboundPackets1_19_4.CUSTOM_PAYLOAD, wrapper.user());
+                        newPacket.write(Types.STRING, "carpet:hello");
+                        newPacket.write(Types.VAR_INT, 420); // hello
+                        newPacket.write(Types.STRING, versionTag.getValue());
+                        newPacket.sendToServer(Protocol1_20To1_20_2.class);
+                    }
+            }
         }
     }
 
